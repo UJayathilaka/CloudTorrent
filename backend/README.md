@@ -6,6 +6,7 @@ FastAPI control service for server-side torrent jobs managed by qBittorrent.
 
 - Bearer-token protected torrent list, add, pause, resume, and delete endpoints.
 - qBittorrent Web API integration over the private Docker network.
+- Caddy reverse proxy with automatic HTTPS; the API is not published directly on a public port.
 - Shared download volume for later processing and cloud-storage upload.
 
 ## Not implemented yet
@@ -17,11 +18,13 @@ Google Drive OAuth, resumable Drive uploads, user accounts, authenticated HTTP R
 1. Install Docker Engine and the Docker Compose plugin.
 2. Copy `.env.example` to `.env`.
 3. Set a long random `API_TOKEN` and a qBittorrent password in `.env`.
-4. Start the services with `docker compose up -d --build`.
-5. Read the qBittorrent container logs to obtain its initial Web UI password, then sign in to its Web UI from a trusted/private network and set the permanent password to match `QBITTORRENT_PASSWORD` in `.env`.
-6. Restart the API with `docker compose restart api`.
+4. Assign a stable public IPv4 address to the VM and allow inbound TCP 80/443 and TCP+UDP 6881 in both the cloud network rules and the VM firewall. Do not open port 8080 or 8000 publicly.
+5. Set `SERVER_DOMAIN` in `.env` to `<public-ip-with-dashes>.sslip.io` (for example, `198-51-100-25.sslip.io`). This DNS service maps the hostname to the embedded public IP; Caddy obtains and renews the HTTPS certificate automatically. Keep the public IP stable.
+6. Start the services with `docker compose up -d --build`.
+7. Read the qBittorrent container logs to obtain its initial Web UI password. For the first setup, use an SSH tunnel or another private access method to reach its Web UI; do not publish port 8080. Set the permanent password to match `QBITTORRENT_PASSWORD` in `.env`.
+8. Restart the API with `docker compose restart api` and check `https://$SERVER_DOMAIN/health`.
 
-The qBittorrent Web UI is intentionally not published as a host port. The API is bound to host loopback (127.0.0.1:8000); use a properly configured HTTPS reverse proxy before remote access.
+Caddy is the only public web entry point. The FastAPI and qBittorrent Web UI ports stay on the private Docker network. Caddy needs inbound TCP ports 80 and 443 for ACME certificate validation and HTTPS; UDP 443 enables HTTP/3.
 
 ## API
 
