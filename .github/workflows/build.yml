@@ -1,4 +1,3 @@
-
 name: Build CloudTorrent APK
 
 on:
@@ -6,12 +5,12 @@ on:
   push:
     paths:
       - 'CloudTorrent-Android-Backend-Starter.zip'
+      - 'android/**'
       - '.github/workflows/build.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,24 +26,20 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Extract project
-        run: unzip -o CloudTorrent-Android-Backend-Starter.zip -d .
+      - name: Extract Android starter
+        run: unzip -o CloudTorrent-Android-Backend-Starter.zip -d /tmp/cloudtorrent-starter
 
-      - name: Inspect Android project configuration
+      - name: Apply maintained Android source
         run: |
-          echo '--- APP GRADLE ---'
-          cat CloudTorrent/app/build.gradle.kts
-          echo '--- MAIN ACTIVITY ---'
-          cat CloudTorrent/app/src/main/java/com/vonko/cloudtorrent/MainActivity.kt
-          echo '--- MANIFEST ---'
-          cat CloudTorrent/app/src/main/AndroidManifest.xml
+          cp -a android/app/src/main/java/. /tmp/cloudtorrent-starter/CloudTorrent/app/src/main/java/
+          sed -i '/converter-gson/a\    implementation("com.squareup.okhttp3:okhttp:4.12.0")' /tmp/cloudtorrent-starter/CloudTorrent/app/build.gradle.kts
 
       - name: Build APK
-        working-directory: CloudTorrent
+        working-directory: /tmp/cloudtorrent-starter/CloudTorrent
         run: gradle :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: CloudTorrent-APK
-          path: CloudTorrent/app/build/outputs/apk/debug/app-debug.apk
+          path: /tmp/cloudtorrent-starter/CloudTorrent/app/build/outputs/apk/debug/app-debug.apk
