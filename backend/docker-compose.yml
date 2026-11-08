@@ -1,0 +1,34 @@
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: cloudtorrent-qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - WEBUI_PORT=8080
+      - TORRENTING_PORT=6881
+    volumes:
+      - ./data/qbittorrent:/config
+      - ./data/downloads:/downloads
+    expose:
+      - "8080"
+    ports:
+      - "6881:6881"
+      - "6881:6881/udp"
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: cloudtorrent-api
+    env_file:
+      - .env
+    environment:
+      - DOWNLOAD_DIR=/downloads
+    volumes:
+      - ./data/downloads:/downloads
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - qbittorrent
+    restart: unless-stopped
