@@ -20,12 +20,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vonko.cloudtorrent.data.AddTorrentRequest
 import com.vonko.cloudtorrent.data.CloudTorrentApi
 import com.vonko.cloudtorrent.data.CloudTorrentApiFactory
 import com.vonko.cloudtorrent.data.TorrentDto
+import com.vonko.cloudtorrent.data.SecureTokenStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -49,7 +51,8 @@ private fun CloudTorrentApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("cloudtorrent_settings", Context.MODE_PRIVATE) }
     var server by remember { mutableStateOf(prefs.getString("server_url", "") ?: "") }
-    var token by remember { mutableStateOf(prefs.getString("api_token", "") ?: "") }
+    val tokenStore = remember { SecureTokenStore(context) }
+    var token by remember { mutableStateOf(tokenStore.read().ifBlank { prefs.getString("api_token", "") ?: "" }) }
     var serverInput by remember { mutableStateOf(server) }
     var tokenInput by remember { mutableStateOf(token) }
     val api = remember(server, token) {
@@ -66,6 +69,14 @@ private fun CloudTorrentApp() {
     var message by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(message, tab) {
+        if (message.isNotBlank() && tab != Tab.SETTINGS) {
+            snackbarHostState.showSnackbar(message)
+            message = ""
+        }
+    }
 
     LaunchedEffect(api, tab) {
         if (api == null) {
@@ -80,8 +91,7 @@ private fun CloudTorrentApp() {
                     error = false
                 } catch (e: Exception) {
                     connected = false
-                    message = e.message?.substringBefore("\n") ?: "Could not connect to server."
-                    error = true
+                    // The ONLINE/OFFLINE indicator communicates polling failures without repeated alerts.
                 }
                 if (tab == Tab.DOWNLOADS) delay(5000) else break
             } while (true)
@@ -91,6 +101,7 @@ private fun CloudTorrentApp() {
     MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Panel, onBackground = Color.White, onSurface = Color.White)) {
         Scaffold(
             containerColor = Bg,
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
             topBar = {
                 TopAppBar(
                     title = { Column {
@@ -152,7 +163,8 @@ private fun CloudTorrentApp() {
                             message = "Enter the API token."
                             error = true
                         } else {
-                            prefs.edit().putString("server_url", value).putString("api_token", tokenInput.trim()).apply()
+                            tokenStore.write(tokenInput.trim())
+                            prefs.edit().putString("server_url", value).remove("api_token").apply()
                             server = value
                             token = tokenInput.trim()
                             message = "Settings saved. Connecting..."
@@ -304,13 +316,14 @@ private fun SettingsScreen(
         OutlinedTextField(server, onServer, modifier = Modifier.fillMaxWidth(), label = { Text("Server URL") },
             placeholder = { Text("https://cloud.example.com") }, singleLine = true)
         OutlinedTextField(token, onToken, modifier = Modifier.fillMaxWidth(), label = { Text("API token") },
-            placeholder = { Text("Paste your server token") }, singleLine = true)
+            placeholder = { Text("Paste your server token") }, singleLine = true,
+            visualTransformation = PasswordVisualTransformation())
         Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save connection") }
         if (message.isNotBlank()) Text(message, color = if (error) Color(0xFFFF8A8A) else Color(0xFF66D6A5), fontSize = 12.sp)
         Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Security", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("HTTPS only. The API token is stored in the app's private preferences.", color = Muted, fontSize = 12.sp)
+                Text("HTTPS only. The API token is encrypted with Android Keystore before it is saved on this device.", color = Muted, fontSize = 12.sp)
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
