@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any
 from urllib.parse import urlparse
@@ -25,7 +26,7 @@ async def require_token(authorization: str | None = Header(default=None)) -> Non
     if not API_TOKEN:
         raise HTTPException(status_code=503, detail="API_TOKEN is not configured")
     expected = f"Bearer {API_TOKEN}"
-    if authorization is None or not __import__("hmac").compare_digest(authorization, expected):
+    if authorization is None or not hmac.compare_digest(authorization, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API token")
 
 
@@ -60,7 +61,7 @@ async def list_torrents() -> list[dict[str, Any]]:
 @app.post("/api/torrents", status_code=202, dependencies=[Depends(require_token)])
 async def add_torrent(request: AddTorrentRequest) -> dict[str, str]:
     parsed = urlparse(request.magnet_uri)
-    if parsed.scheme != "magnet" or not parsed.netloc.startswith("?"):
+    if parsed.scheme.lower() != "magnet" or "xt=" not in parsed.query:
         raise HTTPException(status_code=400, detail="A valid magnet URI is required")
     response = await qbit_request(
         "POST",
