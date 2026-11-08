@@ -30,6 +30,15 @@ jobs:
       - name: Extract project
         run: unzip -o CloudTorrent-Android-Backend-Starter.zip -d .
 
+      - name: Inspect Android project configuration
+        run: |
+          echo '--- APP GRADLE ---'
+          cat CloudTorrent/app/build.gradle.kts
+          echo '--- MAIN ACTIVITY ---'
+          cat CloudTorrent/app/src/main/java/com/vonko/cloudtorrent/MainActivity.kt
+          echo '--- MANIFEST ---'
+          cat CloudTorrent/app/src/main/AndroidManifest.xml
+
       - name: Build APK
         working-directory: CloudTorrent
         run: gradle :app:assembleDebug
