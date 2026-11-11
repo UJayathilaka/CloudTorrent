@@ -20,14 +20,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.vonko.cloudtorrent.data.AddTorrentRequest
 import com.vonko.cloudtorrent.data.CloudTorrentApi
 import com.vonko.cloudtorrent.data.CloudTorrentApiFactory
 import com.vonko.cloudtorrent.data.TorrentDto
-import com.vonko.cloudtorrent.data.SecureTokenStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -51,13 +49,10 @@ private fun CloudTorrentApp() {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("cloudtorrent_settings", Context.MODE_PRIVATE) }
     var server by remember { mutableStateOf(prefs.getString("server_url", "") ?: "") }
-    val tokenStore = remember { SecureTokenStore(context) }
-    var token by remember { mutableStateOf(tokenStore.read().ifBlank { prefs.getString("api_token", "") ?: "" }) }
     var serverInput by remember { mutableStateOf(server) }
-    var tokenInput by remember { mutableStateOf(token) }
-    val api = remember(server, token) {
-        if (server.isBlank() || token.isBlank()) null
-        else runCatching { CloudTorrentApiFactory.create(server, token) }.getOrNull()
+    val api = remember(server) {
+        if (server.isBlank()) null
+        else runCatching { CloudTorrentApiFactory.create(server) }.getOrNull()
     }
     var tab by remember { mutableStateOf(Tab.HOME) }
     var showAdd by remember { mutableStateOf(false) }
@@ -124,7 +119,7 @@ private fun CloudTorrentApp() {
                     NavigationBarItem(tab == Tab.HOME, { tab = Tab.HOME }, { Icon(Icons.Default.Cloud, null) }, label = { Text("Home") })
                     NavigationBarItem(tab == Tab.DOWNLOADS, { tab = Tab.DOWNLOADS }, { Icon(Icons.Default.Download, null) }, label = { Text("Downloads") })
                     NavigationBarItem(tab == Tab.DRIVE, { tab = Tab.DRIVE }, { Icon(Icons.Default.Folder, null) }, label = { Text("Drive") })
-                    NavigationBarItem(tab == Tab.SETTINGS, { tab = Tab.SETTINGS; serverInput = server; tokenInput = token }, { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
+                    NavigationBarItem(tab == Tab.SETTINGS, { tab = Tab.SETTINGS; serverInput = server }, { Icon(Icons.Default.Settings, null) }, label = { Text("Settings") })
                 }
             }
         ) { padding ->
@@ -134,7 +129,7 @@ private fun CloudTorrentApp() {
                     Modifier.padding(padding), torrents, busyHash, { showAdd = true },
                     { hash, command ->
                         if (api == null) {
-                            message = "Set your HTTPS server URL and API token in Settings."
+                            message = "Set your backend server URL in Settings."
                             error = true
                         } else scope.launch {
                             busyHash = hash
@@ -153,25 +148,25 @@ private fun CloudTorrentApp() {
                 Tab.DRIVE -> SimpleScreen(Modifier.padding(padding), "Google Drive",
                     "Drive OAuth, automatic uploads and the cloud library are the next development stage.")
                 Tab.SETTINGS -> SettingsScreen(
-                    Modifier.padding(padding), serverInput, { serverInput = it }, tokenInput, { tokenInput = it },
-                    message, error, {
-                        val value = serverInput.trim().trimEnd('/')
-                        if (!value.startsWith("https://", true)) {
-                            message = "Enter an HTTPS server URL."
-                            error = true
-                        } else if (tokenInput.isBlank()) {
-                            message = "Enter the API token."
-                            error = true
-                        } else {
-                            tokenStore.write(tokenInput.trim())
-                            prefs.edit().putString("server_url", value).remove("api_token").apply()
-                            server = value
-                            token = tokenInput.trim()
-                            message = "Settings saved. Connecting..."
-                            error = false
-                        }
+                    Modifier.padding(padding),
+                    serverInput,
+                    { serverInput = it },
+                    message,
+                    error
+                ) {
+                    val value = serverInput.trim().trimEnd('/')
+                    if (!value.startsWith("http://", true) &&
+                        !value.startsWith("https://", true)
+                    ) {
+                        message = "Enter a valid HTTP or HTTPS server URL."
+                        error = true
+                    } else {
+                        prefs.edit().putString("server_url", value).apply()
+                        server = value
+                        message = "Settings saved. Connecting..."
+                        error = false
                     }
-                )
+                }
             }
         }
 
@@ -185,7 +180,7 @@ private fun CloudTorrentApp() {
                         Text("The magnet link is sent to your cloud server. Your phone does not download the torrent data.", color = Muted, fontSize = 13.sp)
                         OutlinedTextField(value = magnet, onValueChange = { magnet = it }, modifier = Modifier.fillMaxWidth(),
                             placeholder = { Text("magnet:?xt=urn:btih:...") }, minLines = 3)
-                        if (api == null) Text("Configure the HTTPS server and API token in Settings first.", color = Color(0xFFFFC46B), fontSize = 12.sp)
+                        if (api == null) Text("Configure the backend server URL in Settings first.", color = Color(0xFFFFC46B), fontSize = 12.sp)
                     }
                 },
                 confirmButton = {
@@ -222,7 +217,7 @@ private fun CloudTorrentApp() {
 
 @Composable
 private fun HomeScreen(modifier: Modifier, connected: Boolean, torrents: List<TorrentDto>, onAdd: () -> Unit, onDownloads: () -> Unit) {
-    val active = torrents.count { it.progress < 1.0 && !it.state.startsWith("paused") }
+    val active = torrents.count { it.progress < 1.0 && !it.isPaused() }
     val completed = torrents.count { it.progress >= 1.0 }
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp)) {
@@ -283,7 +278,7 @@ private fun TorrentSummary(torrent: TorrentDto) {
 
 @Composable
 private fun TorrentCard(torrent: TorrentDto, busy: Boolean, onPause: () -> Unit, onResume: () -> Unit, onDelete: () -> Unit) {
-    val paused = torrent.state.startsWith("paused")
+    val paused = torrent.isPaused()
     Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text(torrent.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2)
@@ -306,30 +301,61 @@ private fun TorrentCard(torrent: TorrentDto, busy: Boolean, onPause: () -> Unit,
 
 @Composable
 private fun SettingsScreen(
-    modifier: Modifier, server: String, onServer: (String) -> Unit, token: String, onToken: (String) -> Unit,
-    message: String, error: Boolean, onSave: () -> Unit
+    modifier: Modifier,
+    server: String,
+    onServer: (String) -> Unit,
+    message: String,
+    error: Boolean,
+    onSave: () -> Unit
 ) {
-    Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(
+        modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
         Text("Settings", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         Text("Backend connection", color = Color.White, fontWeight = FontWeight.SemiBold)
-        Text("Enter the public HTTPS address of your CloudTorrent server and its API token.", color = Muted, fontSize = 13.sp)
-        OutlinedTextField(server, onServer, modifier = Modifier.fillMaxWidth(), label = { Text("Server URL") },
-            placeholder = { Text("https://cloud.example.com") }, singleLine = true)
-        OutlinedTextField(token, onToken, modifier = Modifier.fillMaxWidth(), label = { Text("API token") },
-            placeholder = { Text("Paste your server token") }, singleLine = true,
-            visualTransformation = PasswordVisualTransformation())
-        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) { Text("Save connection") }
-        if (message.isNotBlank()) Text(message, color = if (error) Color(0xFFFF8A8A) else Color(0xFF66D6A5), fontSize = 12.sp)
+        Text(
+            "Enter the address of your CloudTorrent backend running on this device.",
+            color = Muted,
+            fontSize = 13.sp
+        )
+        OutlinedTextField(
+            value = server,
+            onValueChange = onServer,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Backend URL") },
+            placeholder = { Text("http://127.0.0.1:8000") },
+            singleLine = true
+        )
+        Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+            Text("Save connection")
+        }
+        if (message.isNotBlank()) {
+            Text(
+                message,
+                color = if (error) Color(0xFFFF8A8A) else Color(0xFF66D6A5),
+                fontSize = 12.sp
+            )
+        }
         Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Security", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("HTTPS only. The API token is encrypted with Android Keystore before it is saved on this device.", color = Muted, fontSize = 12.sp)
+                Text("Connection", color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "The app connects directly to your local FastAPI backend. " +
+                    "No API token is currently required.",
+                    color = Muted,
+                    fontSize = 12.sp
+                )
             }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Google Drive", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("OAuth and automatic upload will be implemented next.", color = Muted, fontSize = 12.sp)
+                Text(
+                    "OAuth and automatic upload will be implemented next.",
+                    color = Muted,
+                    fontSize = 12.sp
+                )
             }
         }
     }
@@ -362,6 +388,12 @@ private fun EmptyState(title: String, description: String) {
             Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
             Text(description, color = Muted, fontSize = 12.sp)
         }
+    }
+}
+
+private fun TorrentDto.isPaused(): Boolean {
+    return state.lowercase(Locale.US).let {
+        it.startsWith("paused") || it.startsWith("stopped")
     }
 }
 
